@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { searchSimilarImages } from './api';
+import { getImageSrc, searchSimilarImages } from './api';
 import SearchBox from './components/SearchBox';
 import './index.css';
 
@@ -59,9 +59,9 @@ function App() {
           <div className="results-grid">
             {results.map((result) => (
               <div key={result.id} style={{ textAlign: 'center' }}>
-                {result.image_url ? (
+                {getImageSrc(result) ? (
                   <img
-                    src={result.image_url}
+                    src={getImageSrc(result)}
                     alt={`Match ${result.id}`}
                     className="thumbnail"
                     loading="lazy"

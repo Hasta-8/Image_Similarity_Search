@@ -1,9 +1,41 @@
 /**
- * API client for image similarity search
+ * Centralized API URL handling for Create React App.
+ *
+ * Leave REACT_APP_API_BASE_URL empty for same-origin requests. CRA's
+ * development proxy forwards relative API requests to localhost:8000; a
+ * production reverse proxy should route the same paths to FastAPI.
  */
+export function getApiBaseUrl(environment = process.env) {
+  return (environment.REACT_APP_API_BASE_URL || '').trim().replace(/\/+$/, '');
+}
 
-// Base URL for the FastAPI backend
-export const API_BASE_URL = 'http://localhost:8000';
+export const API_BASE_URL = getApiBaseUrl();
+
+function withLeadingSlash(path) {
+  return path.startsWith('/') ? path : `/${path}`;
+}
+
+export function buildApiUrl(path, backendBase = API_BASE_URL) {
+  const base = (backendBase || '').replace(/\/+$/, '');
+  return `${base}${withLeadingSlash(path)}`;
+}
+
+function isAbsoluteUrl(value) {
+  return /^[a-z][a-z\d+.-]*:/i.test(value) || value.startsWith('//');
+}
+
+function encodePath(path) {
+  return path
+    .split('/')
+    .map((segment) => {
+      try {
+        return encodeURIComponent(decodeURIComponent(segment));
+      } catch {
+        return encodeURIComponent(segment);
+      }
+    })
+    .join('/');
+}
 
 /**
  * Search for similar images by uploading an image file.
@@ -19,7 +51,7 @@ export async function searchSimilarImages(file) {
   
   try {
     // POST to search endpoint
-    const response = await fetch(`${API_BASE_URL}/search-image`, {
+    const response = await fetch(buildApiUrl('/search-image'), {
       method: 'POST',
       body: formData
     });
@@ -49,24 +81,29 @@ export async function searchSimilarImages(file) {
  * @returns {string} Image source URL or data URI
  */
 export function getImageSrc(result, backendBase = API_BASE_URL) {
-  // Prefer image_url if available (from backend response)
-  if (result.image_url) {
-    return result.image_url;
+  if (!result) return null;
+
+  const imageUrl = result.image_url;
+  if (imageUrl) {
+    if (isAbsoluteUrl(imageUrl) || imageUrl.startsWith('data:')) return imageUrl;
+
+    const base = (backendBase || '').replace(/\/+$/, '');
+    if (base && isAbsoluteUrl(base)) {
+      return new URL(imageUrl, `${base}/`).toString();
+    }
+    // Keep backend-provided relative URLs relative for same-origin proxying.
+    return imageUrl;
   }
-  
-  // If path is already a full URL or data URI, return it
-  if (result.path && (result.path.startsWith('http') || result.path.startsWith('data:'))) {
-    return result.path;
+
+  if (result.path && isAbsoluteUrl(result.path)) return result.path;
+  if (result.path && result.path.startsWith('data:')) return result.path;
+  if (result.b64) return `data:image/jpeg;base64,${result.b64}`;
+
+  if (!result.path) return null;
+  const relativePath = encodePath(withLeadingSlash(result.path));
+  const base = (backendBase || '').replace(/\/+$/, '');
+  if (base && isAbsoluteUrl(base)) {
+    return new URL(relativePath, `${base}/`).toString();
   }
-  
-  // If result has base64 data, return data URI
-  if (result.b64) {
-    return `data:image/jpeg;base64,${result.b64}`;
-  }
-  
-  // Build URL from backend base and path
-  const path = result.path || '';
-  // Ensure path starts with slash
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${backendBase}${normalizedPath}`;
+  return relativePath;
 }
