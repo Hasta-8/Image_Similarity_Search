@@ -27,8 +27,9 @@ React frontend.
 - **🛡️ Public-demo hardening**: upload size cap, body-read timeout,
   concurrency cap, per-query timeout, path-traversal-safe image serving, and
   API docs off by default.
-- **💡 React UI**: upload an image and view the matches in a grid. It can be
-  served from the same origin as the API.
+- **💡 React UI**: upload an image and view the matches in a grid of small
+  previews (tap one for the full image). It can be served from the same origin
+  as the API.
 
 ## 🧠 How It Works
 
@@ -44,14 +45,15 @@ Upload → React → POST /search-image → CLIP embedding → FAISS top-5 → J
    `backend/artifacts/releases/<release-id>/` and points `ACTIVE.json` at it.
 3. **Serve:** at startup the API loads and re-validates the active release.
    Each query is embedded with the same CLIP service and searched in FAISS.
-   Results contain dataset-relative paths and relative `/images/...` URLs.
+   Results contain dataset-relative paths, relative `/images/...` URLs, and
+   `/thumbnails/...` URLs for small previews.
 
 ## 📁 Project Structure
 
 ```
 ImgSimiSearch/
 ├── backend/
-│   ├── main.py                 # FastAPI app: /search-image, /health, /ready, /images
+│   ├── main.py                 # FastAPI app: /search-image, /health, /ready, /images, /thumbnails
 │   ├── embeddings.py           # Shared CLIP embedding service
 │   ├── faiss_index.py          # FAISS helpers
 │   ├── rebuild_index.py        # Deterministic candidate build + --validate-only
@@ -63,6 +65,7 @@ ImgSimiSearch/
 │   ├── dataset_fingerprint.py  # Dataset discovery and content hashing
 │   ├── evaluate_retrieval.py   # Precision/Recall/AP/MRR@K against labelled data
 │   ├── request_limits.py       # Upload size and body-read timeout middleware
+│   ├── thumbnails.py           # Downscaled, cached JPEG previews for results
 │   ├── index_images.py         # Legacy append-based indexer (not for releases)
 │   ├── artifacts/              # Release store (ACTIVE.json + releases/), not in git
 │   ├── faiss_index.bin, metadata.json  # Legacy artifacts, local only (see note below)
@@ -99,7 +102,7 @@ cd frontend && npm install && cd ..
 cd backend
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
-# Terminal 2: React dev server on :3000 (proxies API and /images to :8000)
+# Terminal 2: React dev server on :3000 (proxies API, /images and /thumbnails to :8000)
 cd frontend
 npm start
 ```
@@ -128,10 +131,11 @@ Nginx and systemd examples (templates only; nothing is installed for you).
 
 | Endpoint | Description |
 |---|---|
-| `POST /search-image` | Multipart upload (field `file`). Returns `{"results": [{id, score, path, image_url}, ...]}` with the top 5 matches. |
+| `POST /search-image` | Multipart upload (field `file`). Returns `{"results": [{id, score, path, image_url, thumbnail_url}, ...]}` with the top 5 matches. |
 | `GET /health` | Liveness. Always 200; reports runtime mode, active release ID, and vector counts. |
 | `GET /ready` | 200 only when a validated release is loaded; otherwise 503. |
-| `GET /images/<path>` | Serves dataset images. |
+| `GET /images/<path>` | Serves full-size dataset images. |
+| `GET /thumbnails/<path>` | Serves a small JPEG preview (longest side 384 px by default), cached in memory and by the browser. |
 
 ```bash
 curl -X POST -F "file=@dataset/_RSB8594.JPG" http://127.0.0.1:8000/search-image
@@ -154,6 +158,8 @@ artifacts or model unavailable, `504` query timed out.
 | `IMGSIMI_MAX_CONCURRENT_SEARCHES` | `2` | Concurrent CLIP inferences |
 | `IMGSIMI_SEARCH_TIMEOUT_SECONDS` | `60` | Per-query inference timeout |
 | `IMGSIMI_WARMUP_MODEL` | `0` | Load CLIP at startup so the first query isn't slow |
+| `IMGSIMI_THUMBNAIL_SIZE` | `384` | Longest side of result previews, in pixels (16–2048) |
+| `IMGSIMI_THUMBNAIL_CACHE_MB` | `64` | In-memory preview cache budget |
 | `IMGSIMI_ENABLE_DOCS` | `0` | Serve `/docs`, `/redoc`, `/openapi.json` |
 
 Frontend: `REACT_APP_API_BASE_URL` (empty = same origin). See

@@ -53,6 +53,8 @@ def test_image_url_encodes_each_nested_segment(tmp_path):
 
     assert resolver.image_url("nested/photo 1.jpg") == "/images/nested/photo%201.jpg"
     assert resolver.image_url("café/photo.jpg") == "/images/caf%C3%A9/photo.jpg"
+    assert resolver.thumbnail_url("nested/photo 1.jpg") == "/thumbnails/nested/photo%201.jpg"
+    assert resolver.thumbnail_url("café/photo.jpg") == "/thumbnails/caf%C3%A9/photo.jpg"
 
 
 def test_missing_file_can_be_resolved_syntactically_or_rejected(tmp_path):

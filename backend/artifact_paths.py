@@ -45,6 +45,11 @@ def normalize_relative_path(value: str) -> str:
     return PurePosixPath(normalized).as_posix()
 
 
+def _encode_relative(value: str) -> str:
+    relative = normalize_relative_path(value)
+    return "/".join(quote(part, safe="") for part in PurePosixPath(relative).parts)
+
+
 class DatasetPathResolver:
     """Resolve metadata paths under exactly one dataset root."""
 
@@ -82,9 +87,11 @@ class DatasetPathResolver:
 
     def image_url(self, value: str) -> str:
         """Build an encoded ``/images/...`` URL for a relative image path."""
-        relative = normalize_relative_path(value)
-        encoded = "/".join(quote(part, safe="") for part in PurePosixPath(relative).parts)
-        return f"/images/{encoded}"
+        return f"/images/{_encode_relative(value)}"
+
+    def thumbnail_url(self, value: str) -> str:
+        """Build an encoded ``/thumbnails/...`` URL for a relative image path."""
+        return f"/thumbnails/{_encode_relative(value)}"
 
     def metadata_paths(self, metadata: dict[int, str], *, must_exist: bool = False) -> dict[int, str]:
         """Validate every metadata path while preserving the mapping."""

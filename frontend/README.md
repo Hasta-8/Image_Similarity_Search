@@ -26,7 +26,7 @@ npm install
 npm start          # http://localhost:3000
 ```
 
-The app requests relative paths (`/search-image`, `/images/...`). In
+The app requests relative paths (`/search-image`, `/images/...`, `/thumbnails/...`). In
 development, the `proxy` field in `package.json` forwards them to
 `http://localhost:8000`. Production builds do not use this proxy.
 
@@ -37,7 +37,7 @@ development, the `proxy` field in `package.json` forwards them to
 - **Empty or unset (recommended):** requests go to the same origin. Use this
   when the backend serves the build itself (`IMGSIMI_FRONTEND_DIR`, as in
   `deploy/local-demo/demo.sh`) or a reverse proxy routes `/search-image`,
-  `/health`, `/ready`, and `/images/` to the backend.
+  `/health`, `/ready`, `/images/`, and `/thumbnails/` to the backend.
 - **Absolute origin** (for example `https://api.example.com`): only when the
   API is deliberately hosted elsewhere. The backend's CORS allowlist is fixed
   to `http://localhost:3000`, so this setup also needs a backend change.
@@ -61,7 +61,8 @@ secrets in frontend environment files.
       "id": 7488443327725773495,
       "score": 0.8123,
       "path": "nested/photo.jpg",
-      "image_url": "/images/nested/photo.jpg"
+      "image_url": "/images/nested/photo.jpg",
+      "thumbnail_url": "/thumbnails/nested/photo.jpg"
     }
   ]
 }
@@ -73,6 +74,11 @@ same-origin use and resolves it against `REACT_APP_API_BASE_URL` when that is
 an absolute origin. This preserves nested directories, spaces, and Unicode
 names. If `image_url` is `null`, the image cannot be shown. If `image_url` is
 missing entirely, the app falls back to `path`.
+
+The grid displays `thumbnail_url` (a small JPEG preview, via `getThumbnailSrc`)
+and links each preview to the full-size `image_url`. If a result has no
+`thumbnail_url`, or the preview fails to load, the full image is shown
+instead.
 
 Non-2xx responses surface as an error message containing the status code and
 the backend's detail text (for example 413 for an oversized upload or 429 when

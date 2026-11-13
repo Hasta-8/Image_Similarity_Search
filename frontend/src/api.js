@@ -107,3 +107,20 @@ export function getImageSrc(result, backendBase = API_BASE_URL) {
   }
   return relativePath;
 }
+
+/**
+ * Get a small preview URL for the results grid.
+ *
+ * Uses the backend's downscaled `thumbnail_url` when present and falls back to
+ * the full-size image otherwise (for example, an older backend).
+ *
+ * @param {Object} result - Search result object
+ * @param {string} backendBase - Base URL for backend (default: uses API_BASE_URL)
+ * @returns {string|null} Thumbnail URL, full image URL, or null
+ */
+export function getThumbnailSrc(result, backendBase = API_BASE_URL) {
+  if (result && result.thumbnail_url) {
+    return getImageSrc({ image_url: result.thumbnail_url }, backendBase);
+  }
+  return getImageSrc(result, backendBase);
+}

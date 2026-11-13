@@ -8,7 +8,7 @@ result against the actual host before use.
 ## Local single-origin demo (no tunnel)
 
 `deploy/local-demo/demo.sh` runs one FastAPI process that serves the production
-React build, `/search-image`, `/health`, `/ready`, and `/images/...` on
+React build, `/search-image`, `/health`, `/ready`, `/images/...`, and `/thumbnails/...` on
 `http://127.0.0.1:8080`. It starts no tunnel and installs nothing.
 
 The script uses `<repo>/.venv/bin/python` by default. To use a different
@@ -38,7 +38,7 @@ For a single Linux host, the example topology is:
 ```text
 Browser --HTTPS--> reverse proxy --static files--> frontend/build
                          |
-                         +-- /search-image, /health, /ready, /images/* -->
+                         +-- /search-image, /health, /ready, /images/*, /thumbnails/* -->
                              FastAPI on 127.0.0.1:8000
 ```
 
@@ -118,7 +118,7 @@ From `frontend/`, copy `.env.production.example` to `.env.production`, leave
 `frontend/README.md` for local proxy behavior and alternative-origin caveats.
 
 `deploy/nginx/imgsimisearch.conf.example` serves the CRA build and proxies the
-search, health, readiness, and image paths to the backend. It sets request and
+search, health, readiness, image, and thumbnail paths to the backend. It sets request and
 response timeouts and disables response buffering for image responses. Its
 16 MiB `client_max_body_size` and 30 s `client_body_timeout` match the backend
 defaults (`IMGSIMI_MAX_UPLOAD_BYTES`, `IMGSIMI_BODY_READ_TIMEOUT_SECONDS`). If

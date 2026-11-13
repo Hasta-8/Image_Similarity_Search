@@ -14,7 +14,7 @@ from typing import Dict, Optional, Union
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
@@ -35,6 +35,7 @@ from faiss_index import (
 )
 from release_store import ReleaseStore, ReleaseStoreError
 from request_limits import RequestBodyLimitMiddleware
+from thumbnails import THUMBNAIL_SUFFIXES, ThumbnailCache, ThumbnailError
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ BODY_READ_TIMEOUT_SECONDS = _env_float("IMGSIMI_BODY_READ_TIMEOUT_SECONDS", 30.0
 SEARCH_MAX_CONCURRENT = _env_int("IMGSIMI_MAX_CONCURRENT_SEARCHES", 2)
 SEARCH_TIMEOUT_SECONDS = _env_float("IMGSIMI_SEARCH_TIMEOUT_SECONDS", 60.0)
 WARMUP_MODEL_ON_STARTUP = _env_flag("IMGSIMI_WARMUP_MODEL", False)
+# Results-grid previews: longest side in pixels, and in-memory cache budget.
+THUMBNAIL_MAX_SIDE = _env_int("IMGSIMI_THUMBNAIL_SIZE", 384)
+THUMBNAIL_CACHE_BYTES = _env_int("IMGSIMI_THUMBNAIL_CACHE_MB", 64) * 1024 * 1024
 # Interactive API docs are off unless explicitly enabled.
 ENABLE_DOCS = _env_flag("IMGSIMI_ENABLE_DOCS", False)
 
@@ -96,6 +100,12 @@ if SEARCH_TIMEOUT_SECONDS <= 0:
     raise RuntimeError("IMGSIMI_SEARCH_TIMEOUT_SECONDS must be > 0")
 if MAX_UPLOAD_BYTES < 1:
     raise RuntimeError("IMGSIMI_MAX_UPLOAD_BYTES must be >= 1")
+if not 16 <= THUMBNAIL_MAX_SIDE <= 2048:
+    raise RuntimeError("IMGSIMI_THUMBNAIL_SIZE must be between 16 and 2048")
+if THUMBNAIL_CACHE_BYTES < 0:
+    raise RuntimeError("IMGSIMI_THUMBNAIL_CACHE_MB must be >= 0")
+
+thumbnail_cache = ThumbnailCache(THUMBNAIL_MAX_SIDE, THUMBNAIL_CACHE_BYTES)
 
 app = FastAPI(
     title="Image Similarity Search API",
@@ -403,7 +413,7 @@ async def search_image(file: UploadFile = File(...)):
     Search for similar images using FAISS.
 
     Accepts an image file and returns the top 5 most similar images
-    with their IDs, similarity scores, file paths, and image URLs.
+    with their IDs, similarity scores, file paths, image URLs, and thumbnail URLs.
     """
     global index, metadata
 
@@ -468,11 +478,18 @@ async def search_image(file: UploadFile = File(...)):
         for image_id, score in search_results:
             file_path = metadata.get(image_id, "Unknown")
             result_path, image_url = _result_paths(file_path)
+            # Same safe, encoded relative path as image_url, served downscaled.
+            thumbnail_url = (
+                "/thumbnails/" + image_url[len("/images/"):]
+                if image_url and image_url.startswith("/images/")
+                else None
+            )
             results.append({
                 "id": int(image_id),
                 "score": float(score),
                 "path": result_path,
-                "image_url": image_url
+                "image_url": image_url,
+                "thumbnail_url": thumbnail_url,
             })
 
         return {"results": results}
@@ -485,6 +502,34 @@ async def search_image(file: UploadFile = File(...)):
             status_code=500,
             detail="Error processing search request",
         )
+
+
+@app.get("/thumbnails/{image_path:path}")
+async def get_thumbnail(image_path: str):
+    """Serve a downscaled JPEG preview of a dataset image.
+
+    Uses the same dataset-root confinement as search results, so traversal and
+    symlink escapes return 404 like missing files.
+    """
+    try:
+        resolver = path_resolver or DatasetPathResolver(DATASET_DIR)
+        source = resolver.resolve(image_path, must_exist=True)
+    except DatasetPathError:
+        raise HTTPException(status_code=404, detail="Image not found")
+    if source.suffix.lower() not in THUMBNAIL_SUFFIXES:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    try:
+        data = await run_in_threadpool(thumbnail_cache.get, source)
+    except (ThumbnailError, OSError) as exc:
+        logger.warning("Thumbnail unavailable: %s", exc)
+        raise HTTPException(status_code=404, detail="Thumbnail not available")
+
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # Register the root JSON route only in API-only mode. When the built React app
