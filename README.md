@@ -1,155 +1,217 @@
 # 🔍 Image Similarity Search
 
-A full-stack image retrieval system that finds visually similar images using CLIP embeddings and FAISS vector search — wrapped in a lightweight FastAPI backend and a clean React frontend.
+Upload an image and get the most visually similar images from a dataset.
+Built with CLIP embeddings, a FAISS vector index, a FastAPI backend, and a
+React frontend.
 
-This project demonstrates real-world ML engineering: preprocessing, embedding generation, vector indexing, API design, and UI integration.
+> **Status:** A CLIP-built, validated release is active
+> (`backend/artifacts/ACTIVE.json`), so the API serves real CLIP similarity
+> results over the 70-image dataset. Retrieval *quality* has not been measured
+> yet: no human-labelled ground truth exists (see [evaluation/](evaluation/)).
 
 ## 🌟 Features
 
-- **🧠 CLIP-based Embeddings** - Extracts 512-dimensional embeddings from images using OpenAI CLIP
-- **⚡ FAISS Vector Index** - Fast cosine-similarity search across thousands of image embeddings
-- **🎯 Accurate Similarity Results** - Returns top-k nearest images with similarity scores
-- **🚀 FastAPI Backend** - Clean REST endpoint: upload an image → get similar images
-- **💡 React Frontend (MVP)** - Upload an image and instantly visualize similarity matches
-- **🗃️ Metadata Mapping** - Every indexed embedding links back to its image path
-- **🔄 Extensible Architecture** - Add more models, more datasets, or deploy as a microservice
+- **🧠 CLIP embeddings**: one shared embedding service
+  (`openai/clip-vit-base-patch32`, 512-d, L2-normalized) is used for both
+  indexing and search, so the two always match.
+- **⚡ FAISS search**: exact cosine-similarity search via inner product over
+  normalized vectors, returning the top 5 matches with scores.
+- **🧪 Reproducible index builds**: deterministic candidate rebuilds with
+  stable image IDs, a dataset content fingerprint, and a manifest recording
+  model, preprocessing, and failures.
+- **📦 Immutable releases**: candidates are validated, copied into
+  read-only release directories, and activated or rolled back by atomically
+  swapping a pointer file. An invalid active release causes the API to refuse
+  traffic instead of serving bad results.
+- **🛡️ Public-demo hardening**: upload size cap, body-read timeout,
+  concurrency cap, per-query timeout, path-traversal-safe image serving, and
+  API docs off by default.
+- **💡 React UI**: upload an image and view the matches in a grid. It can be
+  served from the same origin as the API.
+
+## 🧠 How It Works
+
+```
+Upload → React → POST /search-image → CLIP embedding → FAISS top-5 → JSON → image grid
+```
+
+1. **Build:** `rebuild_index.py` embeds every dataset image with CLIP and
+   writes a *candidate* (`faiss_index.bin`, `metadata.json`,
+   `manifest.json`) to a new directory.
+2. **Validate and promote:** `promote_release.py` validates the candidate
+   against the dataset and, with `--confirm`, creates an immutable release in
+   `backend/artifacts/releases/<release-id>/` and points `ACTIVE.json` at it.
+3. **Serve:** at startup the API loads and re-validates the active release.
+   Each query is embedded with the same CLIP service and searched in FAISS.
+   Results contain dataset-relative paths and relative `/images/...` URLs.
 
 ## 📁 Project Structure
 
 ```
-ImageSimilaritySearch/
-│
+ImgSimiSearch/
 ├── backend/
-│   ├── main.py              # FastAPI server
-│   ├── embeddings.py        # CLIP embedding generation
-│   ├── faiss_index.py       # FAISS index utilities
-│   ├── index_images.py      # Dataset indexing script
-│   ├── test_client.py       # Test script for API
-│   ├── metadata.json        # Maps index IDs to file paths
-│   ├── requirements.txt
-│   └── ...
-│
-├── frontend/
-│   ├── src/
-│   │   ├── App.js           # UI logic & search integration
-│   │   ├── api.js           # API client
-│   │   ├── components/
-│   │   │   └── SearchBox.jsx
-│   │   └── ...
-│   ├── public/
-│   ├── package.json
-│   └── ...
-│
-└── README.md
+│   ├── main.py                 # FastAPI app: /search-image, /health, /ready, /images
+│   ├── embeddings.py           # Shared CLIP embedding service
+│   ├── faiss_index.py          # FAISS helpers
+│   ├── rebuild_index.py        # Deterministic candidate build + --validate-only
+│   ├── promote_release.py      # Validate and activate a candidate (dry run unless --confirm)
+│   ├── rollback_release.py     # List releases / roll back (dry run unless --confirm)
+│   ├── release_store.py        # Immutable releases and atomic activation
+│   ├── artifact_*.py           # Manifest, validation, safe dataset path handling
+│   ├── stable_ids.py           # Path-derived stable 63-bit image IDs
+│   ├── dataset_fingerprint.py  # Dataset discovery and content hashing
+│   ├── evaluate_retrieval.py   # Precision/Recall/AP/MRR@K against labelled data
+│   ├── request_limits.py       # Upload size and body-read timeout middleware
+│   ├── index_images.py         # Legacy append-based indexer (not for releases)
+│   ├── artifacts/              # Release store (ACTIVE.json + releases/), not in git
+│   ├── faiss_index.bin, metadata.json  # Legacy artifacts, local only (see note below)
+│   ├── requirements.txt, requirements-dev.txt
+│   └── tests/
+├── frontend/                   # Create React App UI (App.js, api.js, SearchBox.jsx)
+├── dataset/                    # Images being searched (served at /images/...), not in git
+├── deploy/                     # Local demo launcher + Nginx/systemd examples
+└── evaluation/                 # Ground-truth schema and labelling guide
 ```
 
-## 🧠 How It Works (High-Level Architecture)
+The dataset images and generated index artifacts are not committed. To run a
+fresh clone, put your images in `dataset/`, then build and promote an index
+(see below).
 
-```
-User Uploads Image → Frontend → FastAPI → CLIP Embedding → FAISS Search →
-→ Top-k Similar Images → Frontend Grid Display
-```
+## 🏗️ Setup
 
-### Under the hood:
-
-1. **Indexing**
-   - Read dataset images
-   - Compute embeddings with CLIP
-   - Normalize vectors
-   - Store them in a FAISS index
-   - Save metadata for ID→filepath mapping
-
-2. **Searching**
-   - User uploads query image
-   - Generate embedding using CLIP
-   - Normalize & search FAISS index
-   - Return top matches with similarity scores
-
-3. **Displaying results**
-   - React fetches JSON from backend
-   - Renders images in a responsive grid
-
-## 🏗️ Setup Instructions
-
-### 1️⃣ Create virtual environment (optional)
+Requires **Python 3.10** and Node.js.
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements-dev.txt   # runtime deps + test deps
+
+cd frontend && npm install && cd ..
 ```
 
-### 2️⃣ Install backend dependencies
+## ▶️ Running
+
+### Development (two processes)
 
 ```bash
-pip install -r backend/requirements.txt
-```
+# Terminal 1: API on :8000 (run from backend/ so imports resolve)
+cd backend
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
-### 3️⃣ Index your images
-
-```bash
-python backend/index_images.py \
-    --folder /path/to/dataset \
-    --index-path backend/faiss_index.bin \
-    --meta-path backend/metadata.json
-```
-
-This will automatically:
-- scan images
-- generate embeddings
-- create/update FAISS index
-
-### 4️⃣ Run FastAPI server
-
-```bash
-uvicorn backend.main:app --reload --port 8000
-```
-
-Visit API docs:  
-👉 http://localhost:8000/docs
-
-### 5️⃣ Run frontend
-
-```bash
+# Terminal 2: React dev server on :3000 (proxies API and /images to :8000)
 cd frontend
-npm install
 npm start
 ```
 
-Frontend runs on:  
-👉 http://localhost:3000
+Open http://localhost:3000. To enable interactive API docs, start the API with
+`IMGSIMI_ENABLE_DOCS=1` and visit http://localhost:8000/docs.
 
-## 🧪 Testing the Search API
+### Local single-origin demo
 
-Use the provided test client:
+One FastAPI process serves the built React app, the API, and the images on
+`http://127.0.0.1:8080`:
 
 ```bash
+cd frontend && REACT_APP_API_BASE_URL= GENERATE_SOURCEMAP=false npm run build && cd ..
+
+export IMGSIMI_PYTHON="$PWD/.venv/bin/python"   # interpreter with backend deps
+deploy/local-demo/demo.sh start    # waits for /health; warns if /ready is not 200
+deploy/local-demo/demo.sh status
+deploy/local-demo/demo.sh stop
+```
+
+It binds to `127.0.0.1` only. See [deploy/README.md](deploy/README.md) for the
+Nginx and systemd examples (templates only; nothing is installed for you).
+
+## 🔌 API
+
+| Endpoint | Description |
+|---|---|
+| `POST /search-image` | Multipart upload (field `file`). Returns `{"results": [{id, score, path, image_url}, ...]}` with the top 5 matches. |
+| `GET /health` | Liveness. Always 200; reports runtime mode, active release ID, and vector counts. |
+| `GET /ready` | 200 only when a validated release is loaded; otherwise 503. |
+| `GET /images/<path>` | Serves dataset images. |
+
+```bash
+curl -X POST -F "file=@dataset/_RSB8594.JPG" http://127.0.0.1:8000/search-image
 python backend/test_client.py path/to/query.jpg
 ```
 
-Or via cURL:
+Error codes: `400` invalid or non-image upload, `413` upload too large, `408`
+body read stalled, `429` search capacity busy (with `Retry-After`), `503`
+artifacts or model unavailable, `504` query timed out.
+
+### Configuration (environment variables)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `IMGSIMI_DATASET_DIR` | `<repo>/dataset` | Dataset root |
+| `IMGSIMI_RELEASE_STORE` | `backend/artifacts` | Release store |
+| `IMGSIMI_FRONTEND_DIR` | unset | Built React app to serve at `/` (single origin) |
+| `IMGSIMI_MAX_UPLOAD_BYTES` | `16777216` (16 MiB) | Upload size cap |
+| `IMGSIMI_BODY_READ_TIMEOUT_SECONDS` | `30` | Max time to receive the request body |
+| `IMGSIMI_MAX_CONCURRENT_SEARCHES` | `2` | Concurrent CLIP inferences |
+| `IMGSIMI_SEARCH_TIMEOUT_SECONDS` | `60` | Per-query inference timeout |
+| `IMGSIMI_WARMUP_MODEL` | `0` | Load CLIP at startup so the first query isn't slow |
+| `IMGSIMI_ENABLE_DOCS` | `0` | Serve `/docs`, `/redoc`, `/openapi.json` |
+
+Frontend: `REACT_APP_API_BASE_URL` (empty = same origin). See
+[frontend/README.md](frontend/README.md).
+
+## 📦 Rebuilding and Releasing the Index
+
+Run from `backend/`. Promotion and rollback are dry runs unless `--confirm`
+is given, and existing releases are never overwritten.
 
 ```bash
-curl -X POST -F "file=@image.jpg" http://localhost:8000/search-image
+# 1. Build a candidate into a NEW, non-existing directory
+python rebuild_index.py --dataset ../dataset --output-dir /path/to/new-candidate
+python rebuild_index.py --validate-only /path/to/new-candidate
+
+# 2. Preview, then activate
+python promote_release.py /path/to/new-candidate --dataset ../dataset
+python promote_release.py /path/to/new-candidate --dataset ../dataset --confirm
+
+# 3. Inspect or roll back
+python rollback_release.py --list
+python rollback_release.py <release-id> --confirm
 ```
 
-## 📸 Demo (Screenshots)
+Restart the API after promoting or rolling back; it does not hot-reload
+releases. Details: [backend/README.md](backend/README.md).
 
-_Add screenshots here once the UI is running — I can help you generate perfect ones._
+> **Legacy artifacts:** `backend/faiss_index.bin` and `backend/metadata.json`
+> were built by an early version that used random placeholder embeddings, so
+> their results are meaningless. They are used only when no `ACTIVE.json`
+> exists, and in that mode `/ready` returns 503. They are kept as the
+> pre-release rollback baseline. Don't use them for real searches.
 
-## 🚀 Future Improvements
+## 🧪 Testing
 
-- Swap placeholder embedding function with integrated CLIP encoder (already implemented in `embeddings.py`)
-- Add batching for faster indexing
-- Add GPU support for embedding generation
-- Deploy backend to Render / AWS / GCP
-- Containerize using Docker
-- Add authentication or rate limiting
-- Add support for multimodal search
+```bash
+# Backend (from backend/). Loads the real CLIP model, so the full suite is slow (~15+ min on CPU).
+cd backend && python -m pytest -q
 
-## 🤝 Contributing
+# Frontend
+cd frontend && CI=true npm test -- --watchAll=false
+```
 
-Pull requests, suggestions, and improvements are welcome. This codebase is intentionally modular, making it easy to extend or experiment.
+## 📏 Evaluating Retrieval Quality
+
+`backend/evaluate_retrieval.py` reports Precision@K, Recall@K, AP@K, and MRR@K
+against human-labelled query/relevance pairs. No labels exist yet. See
+[evaluation/README.md](evaluation/README.md) for the format and labelling
+guidance.
+
+## 🚀 Roadmap
+
+- Collect labelled query/relevance pairs and publish retrieval metrics
+- Containerize (Docker) and add CI
+- GPU inference for the search API (index builds already accept `--device cuda`)
+- Approximate-nearest-neighbour index (HNSW/IVF) for larger datasets
+- Authentication and per-client rate limiting for public deployment
+- Multimodal (text → image) search
 
 ## 📝 License
 
-MIT License — free to use, modify, and distribute.
+MIT License: free to use, modify, and distribute.

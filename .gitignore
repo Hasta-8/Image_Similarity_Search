@@ -23,3 +23,17 @@ dist/
 
 # Dataset (VERY IMPORTANT)
 dataset/
+
+# Local-only notes
+startup.md
+
+# Local working docs (contain machine-specific paths)
+report.md
+ImgSimiSearch_Production_Ready_Roadmap.pdf
+
+# Legacy random-era metadata (absolute host paths; rollback baseline kept locally)
+backend/metadata.json
+
+# Archives and editor state
+*.zip
+.cursor/

@@ -1,0 +1,30 @@
+# Example only. Replace every __...__ placeholder for the target host before use.
+# Do not install, enable, or start this example as part of Phase 3.3.
+[Unit]
+Description=ImgSimiSearch FastAPI backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=imgsimisearch
+CacheDirectory=imgsimisearch
+WorkingDirectory=/__APP_ROOT__/backend
+EnvironmentFile=/etc/imgsimisearch/imgsimisearch.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/env /__VENV_ROOT__/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/imgsimisearch /var/cache/imgsimisearch
+
+[Install]
+WantedBy=multi-user.target
