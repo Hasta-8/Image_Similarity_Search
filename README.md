@@ -6,8 +6,8 @@ React frontend.
 
 > **Status:** A CLIP-built, validated release is active
 > (`backend/artifacts/ACTIVE.json`), so the API serves real CLIP similarity
-> results over the 70-image dataset. Retrieval *quality* has not been measured
-> yet: no human-labelled ground truth exists (see [evaluation/](evaluation/)).
+> results over the 70-image dataset. On the public INRIA Holidays benchmark the
+> pipeline scores **mAP 0.844** (see [Benchmark Results](#-benchmark-results)).
 
 ## 🌟 Features
 
@@ -71,7 +71,7 @@ ImgSimiSearch/
 ├── frontend/                   # Create React App UI (App.js, api.js, SearchBox.jsx)
 ├── dataset/                    # Images being searched (served at /images/...), not in git
 ├── deploy/                     # Local demo launcher + Nginx/systemd examples
-└── evaluation/                 # Ground-truth schema and labelling guide
+└── evaluation/                 # Benchmark tools (INRIA Holidays) and ground-truth schema
 ```
 
 The dataset images and generated index artifacts are not committed. To run a
@@ -197,16 +197,45 @@ cd backend && python -m pytest -q
 cd frontend && CI=true npm test -- --watchAll=false
 ```
 
-## 📏 Evaluating Retrieval Quality
+## 📏 Benchmark Results
 
-`backend/evaluate_retrieval.py` reports Precision@K, Recall@K, AP@K, and MRR@K
-against human-labelled query/relevance pairs. No labels exist yet. See
-[evaluation/README.md](evaluation/README.md) for the format and labelling
-guidance.
+Retrieval quality was measured on **INRIA Holidays** (Jégou, Douze & Schmid,
+ECCV 2008): 1,491 holiday photos in 500 groups of the same scene or object.
+The first photo of each group is the query, and the rest of its group are the
+correct matches.
+
+| Metric (500 queries, gallery of 1,491) | Result |
+|---|---|
+| **mAP, official INRIA scorer** | **0.844** |
+| mAP, standard (non-interpolated) AP | 0.863 |
+| Top-1 result correct | 85.6% |
+| Recall@10 | 0.940 |
+| MRR | 0.898 |
+| *Reference: INRIA's 2008 systems, same scorer* | *0.446 / 0.746* |
+
+| Per-query latency (CPU, after warm-up) | p50 | p95 |
+|---|---|---|
+| JPEG decode | 61 ms | 135 ms |
+| CLIP embedding | 208 ms | 279 ms |
+| FAISS exact search (full ranking) | 1.7 ms | 2.0 ms |
+| **Total** | **270 ms** | **408 ms** |
+
+Setup: `openai/clip-vit-base-patch32` at the pinned revision, exact
+`IndexFlatIP` search, CPU only (8 threads), no fine-tuning, no rotation
+correction. Indexing the 1,491 photos took 6.5 minutes (about 7.4 images/s
+for CLIP alone) with 2.6 GB peak memory. CLIP accounts for about 75% of query
+time, and exact FAISS search costs under 2 ms at this scale.
+
+These figures come from a single run on one machine. They measure the
+pipeline on a public benchmark, not on the 70-image demo dataset.
+Reproduction steps are in [evaluation/README.md](evaluation/README.md).
+
+`backend/evaluate_retrieval.py` computes Precision@K, Recall@K, AP@K and MRR@K
+for any labelled JSONL ground truth, including your own dataset.
 
 ## 🚀 Roadmap
 
-- Collect labelled query/relevance pairs and publish retrieval metrics
+- Apply EXIF orientation and re-measure; label the demo dataset for a domain-specific score
 - Containerize (Docker) and add CI
 - GPU inference for the search API (index builds already accept `--device cuda`)
 - Approximate-nearest-neighbour index (HNSW/IVF) for larger datasets
