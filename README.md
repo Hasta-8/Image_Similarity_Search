@@ -18,7 +18,8 @@ React frontend.
   normalized vectors, returning the top 5 matches with scores.
 - **🧪 Reproducible index builds**: deterministic candidate rebuilds with
   stable image IDs, a dataset content fingerprint, and a manifest recording
-  model, preprocessing, and failures.
+  model, preprocessing, and failures. The CLIP model is pinned to an exact
+  revision, and the API won't serve an index built with a different one.
 - **📦 Immutable releases**: candidates are validated, copied into
   read-only release directories, and activated or rolled back by atomically
   swapping a pointer file. An invalid active release causes the API to refuse

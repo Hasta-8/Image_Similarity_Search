@@ -84,7 +84,9 @@ def get_embedding_metadata_from_service(service) -> dict:
     image_processor = service.processor.image_processor
     return {
         "model_name": service.model_name,
-        "model_revision": getattr(service.model.config, "_commit_hash", None),
+        "model_revision": getattr(
+            service, "model_revision", getattr(service.model.config, "_commit_hash", None)
+        ),
         "embedding_dim": int(service.embedding_dim),
         "normalization": "l2",
         "device": str(service.device),

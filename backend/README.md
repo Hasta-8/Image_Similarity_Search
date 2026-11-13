@@ -92,6 +92,14 @@ same-origin.
 that cannot be decoded raise an error; there are no random placeholder
 embeddings. The model is loaded on first use unless `IMGSIMI_WARMUP_MODEL=1`.
 
+The model is pinned to Hugging Face commit
+`3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268` (`DEFAULT_MODEL_REVISION`). If the
+upstream repository changes, the weights and preprocessing used here do not.
+Rebuilds record this revision in the manifest. At startup the API refuses to
+serve a release built with a different model or revision (see below). To change
+the model or revision, update the constant, then rebuild and promote a new
+release.
+
 ## Building a Candidate Index
 
 `rebuild_index.py` does a deterministic full rebuild into a new directory. It
@@ -149,8 +157,9 @@ the provenance matches and rejects it if it does not.
 
 ### Startup, readiness, and legacy fallback
 
-- **`ACTIVE.json` exists:** the API loads that release and re-validates it
-  against the dataset. If validation fails, the API refuses to serve: it stays
+- **`ACTIVE.json` exists:** the API loads that release, re-validates it
+  against the dataset, and checks that the manifest's model name and revision
+  match the pinned query encoder. If any check fails, the API refuses to serve: it stays
   up for `/health`, but `/ready` and `/search-image` return 503. It never falls
   back to anything else.
 - **No `ACTIVE.json`:** the API loads `faiss_index.bin` and `metadata.json` from

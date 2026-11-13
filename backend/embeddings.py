@@ -2,8 +2,8 @@
 Shared CLIP image embedding service.
 
 This module is the single source of truth for image embeddings used by both
-dataset indexing and API search. It loads ``openai/clip-vit-base-patch32`` once
-per process, applies the same RGB preprocessing for every input type, and
+dataset indexing and API search. It loads ``openai/clip-vit-base-patch32`` at a
+pinned revision once per process, applies the same RGB preprocessing for every input type, and
 returns L2-normalized, contiguous ``float32`` vectors.
 
 No random or fallback embeddings are produced. Invalid images raise
@@ -25,6 +25,11 @@ from PIL import Image, UnidentifiedImageError
 from transformers import CLIPModel, CLIPProcessor
 
 DEFAULT_MODEL_NAME = "openai/clip-vit-base-patch32"
+# Exact Hugging Face commit of DEFAULT_MODEL_NAME. Pinning it keeps the weights
+# and processor config fixed, so query embeddings stay in the same space as the
+# released index even if the upstream repository changes. Release manifests
+# record this value and the API refuses to serve a release built with another.
+DEFAULT_MODEL_REVISION = "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
 DEFAULT_EMBEDDING_DIM = 512
 DEFAULT_BATCH_SIZE = 16
 MAX_BATCH_SIZE = 128
@@ -137,18 +142,25 @@ class ClipEmbeddingService:
         model_name: str = DEFAULT_MODEL_NAME,
         device: Union[str, torch.device, None] = "auto",
         batch_size: int = DEFAULT_BATCH_SIZE,
+        revision: Optional[str] = DEFAULT_MODEL_REVISION,
     ) -> None:
         self.model_name = model_name
+        self.requested_revision = revision
         self.device = resolve_device(device)
         self.batch_size = _validate_batch_size(batch_size)
         self._inference_lock = threading.Lock()
         self._model: Optional[CLIPModel] = None
         self._processor: Optional[CLIPProcessor] = None
 
-        logger.info("Loading CLIP model %s on %s", self.model_name, self.device)
+        logger.info(
+            "Loading CLIP model %s@%s on %s",
+            self.model_name,
+            revision or "latest",
+            self.device,
+        )
         try:
-            model = CLIPModel.from_pretrained(self.model_name)
-            processor = CLIPProcessor.from_pretrained(self.model_name)
+            model = CLIPModel.from_pretrained(self.model_name, revision=revision)
+            processor = CLIPProcessor.from_pretrained(self.model_name, revision=revision)
             model.to(self.device)
             model.eval()
         except Exception as exc:
@@ -156,6 +168,15 @@ class ClipEmbeddingService:
             raise EmbeddingModelError(
                 f"Failed to load CLIP model {self.model_name!r}: {exc}"
             ) from exc
+
+        loaded_revision = getattr(model.config, "_commit_hash", None)
+        if revision and loaded_revision and loaded_revision != revision:
+            raise EmbeddingModelError(
+                f"CLIP model {self.model_name!r} loaded revision {loaded_revision!r}, "
+                f"expected {revision!r}"
+            )
+        # The commit actually loaded; recorded in manifests and checked at runtime.
+        self.model_revision: Optional[str] = loaded_revision or revision
 
         self._model = model
         self._processor = processor
@@ -166,8 +187,9 @@ class ClipEmbeddingService:
             )
 
         logger.info(
-            "CLIP model ready: name=%s device=%s embedding_dim=%d batch_size=%d",
+            "CLIP model ready: name=%s revision=%s device=%s embedding_dim=%d batch_size=%d",
             self.model_name,
+            self.model_revision,
             self.device,
             self.embedding_dim,
             self.batch_size,
@@ -304,6 +326,7 @@ def get_embedding_service(
     model_name: str = DEFAULT_MODEL_NAME,
     device: Union[str, torch.device, None] = "auto",
     batch_size: int = DEFAULT_BATCH_SIZE,
+    revision: Optional[str] = DEFAULT_MODEL_REVISION,
 ) -> ClipEmbeddingService:
     """Return the process-wide embedding service, loading it on first use.
 
@@ -319,10 +342,16 @@ def get_embedding_service(
                 model_name=model_name,
                 device=device,
                 batch_size=batch_size,
+                revision=revision,
             )
             return _service
 
         requested_device = resolve_device(device)
+        if revision != _service.requested_revision:
+            raise EmbeddingModelError(
+                f"Embedding service already initialized with revision "
+                f"{_service.requested_revision!r}; refusing to switch to {revision!r}"
+            )
         if model_name != _service.model_name:
             raise EmbeddingModelError(
                 f"Embedding service already initialized with model "

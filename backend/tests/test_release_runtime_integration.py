@@ -130,6 +130,42 @@ def test_runtime_fails_closed_when_active_release_is_corrupt(tmp_path, monkeypat
     assert response.json()["detail"] == "Artifact runtime unavailable"
 
 
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"model_revision": "0" * 40}, "model revision"),
+        ({"model_revision": None}, "model revision"),
+        ({"model_name": "openai/clip-vit-large-patch14"}, "built with model"),
+    ],
+)
+def test_runtime_fails_closed_when_release_model_differs_from_query_encoder(
+    tmp_path, monkeypatch, overrides, message
+):
+    dataset = make_dataset(tmp_path / "dataset")
+    candidate, _ = build_candidate(tmp_path / "candidate", **overrides)
+    store = ReleaseStore(tmp_path / "store")
+    store.promote(candidate, confirm=True, dataset_root=dataset)
+    _reset_runtime(monkeypatch, store, dataset)
+    client = TestClient(main.app)
+
+    with pytest.raises(RuntimeError, match=message):
+        main.load_index_and_metadata()
+
+    assert main.runtime_mode == "unavailable"
+    assert main.index is None
+    assert message in main.runtime_error
+
+    ready = client.get("/ready")
+    assert ready.status_code == 503
+    assert message in ready.json()["error"]
+
+    response = client.post(
+        "/search-image",
+        files={"file": ("query.jpg", b"fake-image-bytes", "image/jpeg")},
+    )
+    assert response.status_code == 503
+
+
 def test_runtime_rollback_reloads_previous_release(tmp_path, monkeypatch):
     dataset = make_dataset(tmp_path / "dataset")
     candidate_a, _ = build_candidate(tmp_path / "candidate-a")
