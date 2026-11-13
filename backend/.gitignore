@@ -21,6 +21,11 @@ dist/
 # Index files
 *.bin
 
+# Generated candidate artifact sets
+candidate_index/
+
+# Generated release store (indexes, metadata, manifests, active pointer)
+artifacts/
+
 # Dataset (VERY IMPORTANT)
 dataset/
-
