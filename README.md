@@ -274,4 +274,6 @@ ImgSimiSearch/
 
 ## 📝 License
 
-MIT License: free to use, modify, and distribute.
+The source code is released under the [MIT License](LICENSE). Image datasets
+are not part of this repository. INRIA Holidays images are copyright INRIA
+and are used only for evaluation.
