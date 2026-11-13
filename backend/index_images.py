@@ -9,25 +9,32 @@ Example Usage:
     This will:
     - Scan the ../dataset folder recursively for image files (.jpg, .jpeg, .png)
     - Print how many images will be indexed before processing
-    - Generate embeddings for each image
+    - Generate normalized CLIP embeddings in bounded batches
     - Add them to a FAISS index (default: faiss_index.bin)
     - Save metadata (default: metadata.json)
 
 Full example with all options:
-    python index_images.py --folder ../dataset --index-path faiss_index.bin --meta-path metadata.json --dim 512
+    python index_images.py --folder ../dataset --index-path faiss_index.bin \
+        --meta-path metadata.json --batch-size 16
 
-Note: The script already supports:
-    - Accepting --folder argument (required)
-    - Printing the number of images found before indexing
-    - Recursive folder scanning
-    - Progress updates during processing
+The embedding dimension is fixed at 512 for openai/clip-vit-base-patch32.
 """
 
-import os
 import argparse
-import numpy as np
+import logging
+import os
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
+
+import numpy as np
+
+from embeddings import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_EMBEDDING_DIM,
+    EmbeddingError,
+    generate_embedding,
+    generate_embeddings_batch,
+)
 from faiss_index import (
     create_faiss_index,
     load_faiss_index,
@@ -38,36 +45,49 @@ from faiss_index import (
     normalize_vectors
 )
 
+logger = logging.getLogger(__name__)
 
 # Supported image extensions
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG'}
 
 
 def get_image_embedding(image_path: str) -> np.ndarray:
+    """Compute a normalized CLIP embedding for an image file.
+
+    This compatibility wrapper delegates to the shared embedding service. The
+    indexing loop uses the batch API directly; this helper remains for callers
+    that need a single vector.
     """
-    Compute embedding for an image file.
-    
-    TODO: Replace this placeholder with actual CLIP embedding generation.
-    This function should:
-    1. Load the image from image_path
-    2. Use CLIP model to generate embedding
-    3. Return a 1-D float32 numpy array of dimension 512 (or appropriate CLIP dimension)
-    
-    Example implementation (to be replaced):
-        from embeddings import generate_embedding
-        embedding = generate_embedding(image_path)
-        return embedding.flatten()  # Ensure 1-D array
-    
-    Args:
-        image_path: Path to the image file
-    
-    Returns:
-        1-D float32 numpy array of embedding dimension
-    """
-    # TODO: Implement actual CLIP embedding generation here
-    # For now, return a dummy embedding to allow testing
-    dim = 512  # CLIP vision encoder dimension
-    return np.random.rand(dim).astype('float32')
+    return generate_embedding(image_path).reshape(-1)
+
+
+def _validate_embedding_matrix(
+    embeddings: np.ndarray,
+    expected_count: int,
+    embedding_dim: int,
+) -> np.ndarray:
+    """Validate a batch of unit-normalized float32 embeddings."""
+    if not isinstance(embeddings, np.ndarray):
+        raise ValueError(
+            f"Embedding output must be a numpy array, got {type(embeddings).__name__}"
+        )
+    embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
+    expected_shape = (expected_count, embedding_dim)
+    if embeddings.shape != expected_shape:
+        raise ValueError(
+            f"Embedding shape mismatch: expected {expected_shape}, got {embeddings.shape}"
+        )
+    if not np.all(np.isfinite(embeddings)):
+        raise ValueError("Embedding batch contains non-finite values")
+    norms = np.linalg.norm(embeddings, axis=1)
+    if np.any(norms <= 1e-12):
+        raise ValueError("Embedding batch contains a zero-norm vector")
+    if not np.allclose(norms, 1.0, atol=1e-4):
+        raise ValueError(
+            f"Embedding batch is not unit-normalized (norms {norms.min():.6f}"
+            f"..{norms.max():.6f})"
+        )
+    return embeddings
 
 
 def find_image_files(folder_path: str) -> List[str]:
@@ -103,26 +123,41 @@ def index_images(
     folder_path: str,
     index_path: str,
     meta_path: str,
-    embedding_dim: int = 512
+    embedding_dim: int = DEFAULT_EMBEDDING_DIM,
+    batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> None:
     """
-    Index all images in a folder by computing embeddings and adding them to FAISS index.
-    
+    Index all images in a folder by computing CLIP embeddings and adding them
+    to a FAISS index.
+
     Args:
         folder_path: Path to folder containing images
         index_path: Path where FAISS index will be saved
         meta_path: Path where metadata JSON will be saved
-        embedding_dim: Dimension of embeddings (default: 512 for CLIP)
+        embedding_dim: Dimension of embeddings (must be 512 for this checkpoint)
+        batch_size: Maximum number of images per CLIP inference batch
     """
+    if embedding_dim != DEFAULT_EMBEDDING_DIM:
+        raise ValueError(
+            f"This CLIP checkpoint produces {DEFAULT_EMBEDDING_DIM}-dimensional "
+            f"embeddings; embedding_dim={embedding_dim} is not supported"
+        )
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValueError(f"batch_size must be a positive integer, got {batch_size!r}")
+
     print(f"Scanning folder: {folder_path}")
     image_files = find_image_files(folder_path)
-    
+
     if not image_files:
         print("No image files found!")
         return
-    
-    print(f"Found {len(image_files)} image file(s)\n")
-    
+
+    print(f"Found {len(image_files)} image file(s)")
+    print(
+        f"Embedding model: openai/clip-vit-base-patch32 "
+        f"({embedding_dim}-d), batch_size={batch_size}\n"
+    )
+
     # Load existing metadata to continue ID sequence
     metadata = load_metadata(meta_path)
     if metadata:
@@ -132,65 +167,95 @@ def index_images(
     else:
         next_id = 0
         print("No existing metadata found, starting IDs from 0\n")
-    
+
     # Collect embeddings and IDs
     embeddings_list: List[np.ndarray] = []
     ids_list: List[int] = []
     metadata_dict = metadata.copy()  # Start with existing metadata
-    
-    # Process each image
-    print("Processing images...")
-    for i, image_path in enumerate(image_files, 1):
+    failed_images: List[tuple[str, str]] = []
+
+    print("Processing images in bounded batches...")
+    processed_count = 0
+    for batch_start in range(0, len(image_files), batch_size):
+        batch_paths = image_files[batch_start : batch_start + batch_size]
+        batch_embeddings: np.ndarray
+        successful_paths: List[str]
+
         try:
-            # Compute embedding
-            embedding = get_image_embedding(image_path)
-            
-            # Validate embedding shape
-            if embedding.ndim != 1:
-                print(f"  Warning: Embedding for {image_path} is not 1-D, flattening...")
-                embedding = embedding.flatten()
-            
-            if embedding.shape[0] != embedding_dim:
-                print(f"  Error: Embedding dimension mismatch for {image_path}")
-                print(f"         Expected {embedding_dim}, got {embedding.shape[0]}")
+            batch_embeddings = generate_embeddings_batch(
+                batch_paths, batch_size=batch_size
+            )
+            batch_embeddings = _validate_embedding_matrix(
+                batch_embeddings, len(batch_paths), embedding_dim
+            )
+            successful_paths = batch_paths
+        except EmbeddingError as batch_error:
+            logger.warning(
+                "Batch %d failed (%s); retrying images individually",
+                batch_start // batch_size + 1,
+                batch_error,
+            )
+            print(
+                f"  Batch at image {batch_start + 1} failed; "
+                "retrying images individually to isolate invalid files..."
+            )
+            single_embeddings: List[np.ndarray] = []
+            successful_paths = []
+            for image_path in batch_paths:
+                try:
+                    single_embedding = generate_embedding(image_path).reshape(-1)
+                    single_embedding = _validate_embedding_matrix(
+                        single_embedding.reshape(1, -1), 1, embedding_dim
+                    )[0]
+                except EmbeddingError as exc:
+                    failed_images.append((image_path, str(exc)))
+                    print(f"  Skipping {image_path}: {exc}")
+                    continue
+                single_embeddings.append(single_embedding)
+                successful_paths.append(image_path)
+            if not single_embeddings:
                 continue
-            
-            # Assign ID
+            batch_embeddings = np.stack(single_embeddings).astype('float32', copy=False)
+
+        for image_path, embedding in zip(successful_paths, batch_embeddings):
             image_id = next_id
             next_id += 1
-            
-            # Store embedding and ID
+
             embeddings_list.append(embedding)
             ids_list.append(image_id)
-            
-            # Store metadata (use absolute path for consistency)
-            abs_path = os.path.abspath(image_path)
-            metadata_dict[image_id] = abs_path
-            
-            # Print progress every 10 images or on last image
-            if i % 10 == 0 or i == len(image_files):
-                print(f"  Processed {i}/{len(image_files)} images...")
-        
-        except Exception as e:
-            print(f"  Error processing {image_path}: {e}")
-            continue
-    
+            metadata_dict[image_id] = os.path.abspath(image_path)
+            processed_count += 1
+
+        print(
+            f"  Processed {processed_count}/{len(image_files)} image(s) "
+            f"({len(failed_images)} failed so far)"
+        )
+
     if not embeddings_list:
         print("\nNo embeddings were successfully generated!")
+        if failed_images:
+            print("Failed images:")
+            for image_path, reason in failed_images:
+                print(f"  - {image_path}: {reason}")
         return
-    
-    print(f"\nSuccessfully processed {len(embeddings_list)} image(s)\n")
-    
+
+    print(f"\nSuccessfully processed {len(embeddings_list)} image(s)")
+    if failed_images:
+        print(f"Failed images ({len(failed_images)}):")
+        for image_path, reason in failed_images:
+            print(f"  - {image_path}: {reason}")
+    print()
+
     # Stack embeddings into numpy array
     print("Stacking embeddings...")
     embeddings_array = np.stack(embeddings_list).astype('float32')
     print(f"  Embeddings shape: {embeddings_array.shape}\n")
-    
+
     # Normalize embeddings (required for cosine similarity)
     print("Normalizing embeddings...")
     embeddings_array = normalize_vectors(embeddings_array)
     print("  Embeddings normalized\n")
-    
+
     # Load or create FAISS index
     print("Loading or creating FAISS index...")
     try:
@@ -223,6 +288,8 @@ def index_images(
     print(f"Folder scanned:     {folder_path}")
     print(f"Images found:       {len(image_files)}")
     print(f"Images indexed:     {len(embeddings_list)}")
+    print(f"Images failed:      {len(failed_images)}")
+    print(f"Batch size:         {batch_size}")
     print(f"Total in index:     {index.ntotal}")
     print(f"Index file:         {index_path}")
     print(f"Metadata file:      {meta_path}")
@@ -256,10 +323,16 @@ def main():
     parser.add_argument(
         "--dim",
         type=int,
-        default=512,
-        help="Embedding dimension (default: 512 for CLIP)"
+        default=DEFAULT_EMBEDDING_DIM,
+        help=f"Embedding dimension (fixed at {DEFAULT_EMBEDDING_DIM} for this checkpoint)"
     )
-    
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help=f"Maximum images per CLIP inference batch (default: {DEFAULT_BATCH_SIZE})"
+    )
+
     args = parser.parse_args()
     
     try:
@@ -267,7 +340,8 @@ def main():
             folder_path=args.folder,
             index_path=args.index_path,
             meta_path=args.meta_path,
-            embedding_dim=args.dim
+            embedding_dim=args.dim,
+            batch_size=args.batch_size,
         )
     except KeyboardInterrupt:
         print("\n\nIndexing interrupted by user")
