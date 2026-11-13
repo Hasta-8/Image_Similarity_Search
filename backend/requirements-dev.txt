@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# FastAPI/Starlette TestClient dependency for API tests.
+httpx==0.25.2
