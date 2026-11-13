@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getImageSrc, searchSimilarImages } from './api';
+import { getImageSrc, getThumbnailSrc, searchSimilarImages } from './api';
 import SearchBox from './components/SearchBox';
 import './index.css';
 
@@ -60,12 +60,27 @@ function App() {
             {results.map((result) => (
               <div key={result.id} style={{ textAlign: 'center' }}>
                 {getImageSrc(result) ? (
-                  <img
-                    src={getImageSrc(result)}
-                    alt={`Match ${result.id}`}
-                    className="thumbnail"
-                    loading="lazy"
-                  />
+                  <a
+                    href={getImageSrc(result)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Open full-size image for match ${result.id}`}
+                  >
+                    <img
+                      src={getThumbnailSrc(result)}
+                      alt={`Match ${result.id}`}
+                      className="thumbnail"
+                      loading="lazy"
+                      onError={(event) => {
+                        // If the preview fails, show the original once.
+                        const img = event.currentTarget;
+                        if (!img.dataset.fallback) {
+                          img.dataset.fallback = 'full';
+                          img.src = getImageSrc(result);
+                        }
+                      }}
+                    />
+                  </a>
                 ) : (
                   <div 
                     className="thumbnail" 

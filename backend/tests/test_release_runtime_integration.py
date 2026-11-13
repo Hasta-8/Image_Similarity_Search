@@ -61,7 +61,12 @@ def test_api_loads_promoted_release_and_returns_safe_relative_paths(tmp_path, mo
     assert result["id"] == 101
     assert result["path"] == "nested/cat.jpg"
     assert result["image_url"] == "/images/nested/cat.jpg"
+    assert result["thumbnail_url"] == "/thumbnails/nested/cat.jpg"
     assert str(dataset) not in str(response.json())
+
+    thumbnail = client.get(result["thumbnail_url"])
+    assert thumbnail.status_code == 200
+    assert thumbnail.headers["content-type"] == "image/jpeg"
 
 
 def test_legacy_fallback_is_live_but_not_retrieval_ready(tmp_path, monkeypatch):

@@ -34,6 +34,7 @@ for a local single-origin demo launcher and Nginx/systemd templates.
 | `GET /health` | Liveness. Always 200; reports `runtime_mode`, `active_release_id`, and counts. |
 | `GET /ready` | 200 only when a validated release is loaded, otherwise 503. |
 | `GET /images/<path>` | Static files from the dataset directory. |
+| `GET /thumbnails/<path>` | Downscaled JPEG preview of a dataset image (see Thumbnails below). |
 | `GET /` | JSON welcome message, or the React app when `IMGSIMI_FRONTEND_DIR` is set. |
 | `/docs`, `/redoc`, `/openapi.json` | 404 unless `IMGSIMI_ENABLE_DOCS=1`. |
 
@@ -42,15 +43,17 @@ Search response:
 ```json
 {
   "results": [
-    {"id": 7488443327725773495, "score": 1.0, "path": "_RSB8594.JPG", "image_url": "/images/_RSB8594.JPG"}
+    {"id": 7488443327725773495, "score": 1.0, "path": "_RSB8594.JPG", "image_url": "/images/_RSB8594.JPG", "thumbnail_url": "/thumbnails/_RSB8594.JPG"}
   ]
 }
 ```
 
 `path` is always dataset-relative (never an absolute host path) and `image_url`
-is a URL-encoded relative `/images/...` URL. If a result file is missing or
+is a URL-encoded relative `/images/...` URL. `thumbnail_url` is the same path
+under `/thumbnails/`. If a result file is missing or
 resolves outside the dataset, the result is still returned, but its `path` is
-`"Unknown"` (or a bare file name in legacy mode) and its `image_url` is `null`.
+`"Unknown"` (or a bare file name in legacy mode) and its `image_url` and
+`thumbnail_url` are `null`.
 
 Error responses:
 
@@ -75,6 +78,8 @@ Error responses:
 | `IMGSIMI_MAX_CONCURRENT_SEARCHES` | `2` | Concurrent query embeddings |
 | `IMGSIMI_SEARCH_TIMEOUT_SECONDS` | `60` | Per-query embedding timeout |
 | `IMGSIMI_WARMUP_MODEL` | `0` | Load CLIP at startup |
+| `IMGSIMI_THUMBNAIL_SIZE` | `384` | Longest side of previews in pixels (16–2048) |
+| `IMGSIMI_THUMBNAIL_CACHE_MB` | `64` | In-memory preview cache budget (`0` disables caching) |
 | `IMGSIMI_ENABLE_DOCS` | `0` | Enable the OpenAPI docs routes |
 
 Invalid numeric values stop the server at import time. A timed-out search keeps
@@ -99,6 +104,24 @@ Rebuilds record this revision in the manifest. At startup the API refuses to
 serve a release built with a different model or revision (see below). To change
 the model or revision, update the constant, then rebuild and promote a new
 release.
+
+## Thumbnails
+
+Dataset originals can be 4–14 MB each, which is slow to load on a phone. The
+results grid uses `GET /thumbnails/<path>` instead. It returns a JPEG whose
+longest side is `IMGSIMI_THUMBNAIL_SIZE`, and it never upscales.
+
+- **Generation:** a thumbnail is made on first request in a worker thread
+  (`thumbnails.py`). JPEG draft decoding keeps this fast even for large photos.
+- **Caching:** results are kept in an in-memory LRU cache bounded by
+  `IMGSIMI_THUMBNAIL_CACHE_MB`. Cache keys include the source file's
+  modification time and size, so an edited image gets a fresh thumbnail.
+  Responses send `Cache-Control: public, max-age=86400`.
+- **Orientation:** the EXIF orientation tag is applied, so previews display
+  the same way browsers show the originals. Embeddings are not affected.
+- **Path safety:** paths use the same dataset-root confinement as search
+  results. Missing, non-image, undecodable, traversal and symlink-escape paths
+  all return 404.
 
 ## Building a Candidate Index
 

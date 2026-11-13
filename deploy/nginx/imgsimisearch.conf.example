@@ -53,6 +53,15 @@ server {
         proxy_buffering off;
     }
 
+    # Small JPEG previews for the results grid (generated and cached by the API).
+    location ^~ /thumbnails/ {
+        proxy_pass http://imgsimisearch_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

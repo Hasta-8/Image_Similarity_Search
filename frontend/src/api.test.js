@@ -1,4 +1,10 @@
-import { buildApiUrl, getApiBaseUrl, getImageSrc, searchSimilarImages } from './api';
+import {
+  buildApiUrl,
+  getApiBaseUrl,
+  getImageSrc,
+  getThumbnailSrc,
+  searchSimilarImages,
+} from './api';
 
 test('builds same-origin API paths by default', () => {
   expect(buildApiUrl('/search-image', '')).toBe('/search-image');
@@ -57,4 +63,23 @@ test('encodes raw fallback paths by segment while preserving nested directories'
   expect(
     getImageSrc({ path: 'nested dir/café photo.jpg' }, '')
   ).toBe('/nested%20dir/caf%C3%A9%20photo.jpg');
+});
+
+test('prefers the backend thumbnail URL and keeps it same-origin', () => {
+  const result = {
+    image_url: '/images/nested%20dir/caf%C3%A9.jpg',
+    thumbnail_url: '/thumbnails/nested%20dir/caf%C3%A9.jpg',
+  };
+  expect(getThumbnailSrc(result, '')).toBe('/thumbnails/nested%20dir/caf%C3%A9.jpg');
+  expect(getThumbnailSrc(result, 'https://api.example.com')).toBe(
+    'https://api.example.com/thumbnails/nested%20dir/caf%C3%A9.jpg'
+  );
+});
+
+test('falls back to the full image when no thumbnail URL is provided', () => {
+  expect(getThumbnailSrc({ image_url: '/images/a.jpg' }, '')).toBe('/images/a.jpg');
+  expect(getThumbnailSrc({ image_url: '/images/a.jpg', thumbnail_url: null }, '')).toBe(
+    '/images/a.jpg'
+  );
+  expect(getThumbnailSrc(null, '')).toBeNull();
 });

@@ -72,6 +72,7 @@ def test_release_api_returns_encoded_nested_urls_without_basename_collisions(
         assert results[image_id]["image_url"] == expected_urls[image_id]
         assert results[image_id]["image_url"].startswith("/images/")
         assert str(dataset) not in results[image_id]["image_url"]
+        assert results[image_id]["thumbnail_url"] == resolver.thumbnail_url(relative_path)
         assert resolver.resolve(relative_path, must_exist=True).is_file()
 
     assert results[101]["image_url"] != results[202]["image_url"]
