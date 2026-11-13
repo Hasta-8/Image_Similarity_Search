@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 
 from embeddings import (
     DEFAULT_EMBEDDING_DIM,
+    DEFAULT_MODEL_REVISION,
     EmbeddingError,
     EmbeddingModelError,
     generate_embedding,
@@ -167,6 +168,17 @@ def test_invalid_image_in_batch_raises(service, tmp_path):
 
 def test_service_is_cached(service):
     assert get_embedding_service(device="cpu") is service
+
+
+def test_service_loads_the_pinned_model_revision(service):
+    assert service.requested_revision == DEFAULT_MODEL_REVISION
+    assert service.model_revision == DEFAULT_MODEL_REVISION
+    assert service.model.config._commit_hash == DEFAULT_MODEL_REVISION
+
+
+def test_service_refuses_to_switch_revision(service):
+    with pytest.raises(EmbeddingModelError, match="revision"):
+        get_embedding_service(device="cpu", revision="0" * 40)
 
 
 def test_invalid_device_raises_clear_error():

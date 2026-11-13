@@ -14,6 +14,7 @@ from artifact_manifest import (
     build_manifest,
     write_manifest,
 )
+from embeddings import DEFAULT_MODEL_NAME, DEFAULT_MODEL_REVISION
 from faiss_index import add_embeddings, create_faiss_index, save_faiss_index, save_metadata
 
 
@@ -42,6 +43,8 @@ def build_candidate(
     paths: tuple[str, ...] = ("nested/cat.jpg", "dog.png"),
     vectors: np.ndarray | None = None,
     generated_at_utc: str = "2026-01-01T00:00:00Z",
+    model_name: str = DEFAULT_MODEL_NAME,
+    model_revision: str | None = DEFAULT_MODEL_REVISION,
 ) -> tuple[Path, dict]:
     directory.mkdir()
     if vectors is None:
@@ -56,8 +59,8 @@ def build_candidate(
     manifest = build_manifest(
         artifact_dir=directory,
         embedding={
-            "model_name": "test-model",
-            "model_revision": "test-revision",
+            "model_name": model_name,
+            "model_revision": model_revision,
             "embedding_dim": dim,
             "normalization": "l2",
             "device": "cpu",

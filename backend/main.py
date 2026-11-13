@@ -7,6 +7,7 @@ Uses FAISS for vector search and CLIP for image embeddings.
 import asyncio
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Dict, Optional, Union
 
@@ -21,6 +22,8 @@ from starlette.concurrency import run_in_threadpool
 from artifact_paths import DatasetPathError, DatasetPathResolver
 from embeddings import (
     DEFAULT_EMBEDDING_DIM,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_MODEL_REVISION,
     EmbeddingError,
     EmbeddingModelError,
     generate_embedding,
@@ -125,6 +128,10 @@ metadata: Dict[int, str] = {}
 index_path = str(BACKEND_DIR / "faiss_index.bin")
 metadata_path = str(BACKEND_DIR / "metadata.json")
 embedding_dim = DEFAULT_EMBEDDING_DIM
+# The query encoder this process uses. A release built with a different model
+# or revision lives in a different embedding space and must not be served.
+expected_model_name = DEFAULT_MODEL_NAME
+expected_model_revision = DEFAULT_MODEL_REVISION
 release_store = ReleaseStore(RELEASE_STORE_DIR)
 active_release_id: Optional[str] = None
 runtime_mode = "unavailable"
@@ -187,6 +194,27 @@ def _load_legacy_artifacts() -> None:
     path_resolver = None
 
 
+def _verify_release_embedding(manifest) -> None:
+    """Reject a release whose embedding model differs from the query encoder."""
+    embedding = manifest.get("embedding") if isinstance(manifest, Mapping) else None
+    if not isinstance(embedding, Mapping):
+        raise RuntimeError("Release manifest has no embedding section")
+
+    release_model = embedding.get("model_name")
+    if release_model != expected_model_name:
+        raise RuntimeError(
+            f"Release was built with model {release_model!r}, but the API encodes "
+            f"queries with {expected_model_name!r}"
+        )
+    release_revision = embedding.get("model_revision")
+    if release_revision != expected_model_revision:
+        raise RuntimeError(
+            f"Release was built with model revision {release_revision!r}, but the "
+            f"API encodes queries with revision {expected_model_revision!r}; "
+            "rebuild and promote a release with the pinned revision"
+        )
+
+
 def load_index_and_metadata() -> None:
     """Load and validate the active release, or legacy artifacts as a fallback.
 
@@ -201,6 +229,7 @@ def load_index_and_metadata() -> None:
             artifacts = release_store.load_active_release(
                 DATASET_DIR, expected_embedding_dim=embedding_dim
             )
+            _verify_release_embedding(artifacts.manifest)
             index = artifacts.index
             metadata = artifacts.metadata
             active_release_id = artifacts.release_id
