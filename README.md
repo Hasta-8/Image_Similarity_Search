@@ -186,7 +186,10 @@ python3.10 -m venv .venv && source .venv/bin/activate
 pip install -r backend/requirements-dev.txt
 (cd frontend && npm install)
 
-# 2. Add images to dataset/, then build, check and activate an index
+# 2. Fill dataset/ (the demo set: 100 bird and animal photos from Open Images,
+#    CC BY 2.0, credits written to dataset/CREDITS.csv), or add your own images.
+#    Then build, check and activate an index
+python scripts/fetch_demo_dataset.py --output dataset
 cd backend
 python rebuild_index.py --dataset ../dataset --output-dir candidate_index
 python promote_release.py candidate_index --dataset ../dataset            # dry run
@@ -253,6 +256,7 @@ ImgSimiSearch/
 │   └── tests/                   # 184 backend tests
 ├── frontend/src/                # React UI: App.js, api.js, components/SearchBox.jsx
 ├── evaluation/                  # INRIA Holidays tools and ground-truth schema
+├── scripts/fetch_demo_dataset.py  # Downloads the demo dataset (Open Images V7, CC BY 2.0)
 └── deploy/                      # Demo launcher, Nginx and systemd templates
 ```
 
@@ -275,5 +279,9 @@ ImgSimiSearch/
 ## 📝 License
 
 The source code is released under the [MIT License](LICENSE). Image datasets
-are not part of this repository. INRIA Holidays images are copyright INRIA
+are not part of this repository. The demo dataset is 100 photos from the
+[Open Images V7](https://storage.googleapis.com/openimages/web/index.html) validation
+split (10 classes of birds and animals, no photos labelled with people), each
+CC BY 2.0 by its Flickr author; `scripts/fetch_demo_dataset.py` downloads them and
+writes each photo's author and source to `dataset/CREDITS.csv`. INRIA Holidays images are copyright INRIA
 and are used only for evaluation.

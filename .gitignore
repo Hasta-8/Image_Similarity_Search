@@ -23,6 +23,7 @@ dist/
 
 # Dataset (VERY IMPORTANT)
 dataset/
+.openimages-cache/
 
 # Local-only notes
 startup.md
