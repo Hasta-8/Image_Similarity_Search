@@ -30,7 +30,7 @@ function App() {
   return (
     <div className="container">
       <header style={{ textAlign: 'center', marginBottom: '30px' }}>
-        <h1>Image Similarity Search (MVP)</h1>
+        <h1>Image Similarity Search</h1>
       </header>
 
       {/* SearchBox component */}
