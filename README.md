@@ -10,6 +10,9 @@ reproducible index builds, versioned releases with rollback, a pinned model
 version, hardening for public demos, and measured retrieval quality on a
 public benchmark.
 
+**▶ [2-minute narrated walkthrough video](https://youtu.be/lahenfW94s4)**: three
+example searches, how the search works, and the measured results.
+
 **Highlights**
 
 - **mAP 0.844** on the INRIA Holidays retrieval benchmark (500 queries), against
